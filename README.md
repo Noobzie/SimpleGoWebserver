@@ -1,2 +1,2 @@
 # SimpleGoWebserver
-Simple webser written in Go to learn go
+Simple webserver written in Go to learn
