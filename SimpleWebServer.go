@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -15,12 +16,18 @@ type Device struct {
 	DeviceID int `json:"deviceid"`
 }
 
+var (
+	ctx context.Context
+	db  *sql.DB
+)
+
 func main() {
 	http.HandleFunc("/4", readFromUrl) //Call function outside of main
 	http.HandleFunc("/", helloWorld)
 	http.HandleFunc("/getNewId", getNewId)
 	http.HandleFunc("/3", respondWithJSON)
 	http.HandleFunc("/OpenDB", testDatabase)
+	dbConn()
 
 	log.Println("Listening on port 4040")
 	if err := http.ListenAndServe(":4040", nil); err != nil {
@@ -29,12 +36,8 @@ func main() {
 }
 
 func testDatabase(w http.ResponseWriter, r *http.Request) {
-	fmt.Println("Connecting to database")
-	db, err := sql.Open("mysql", "dasc:dasc@tcp(127.0.0.1:3306)/CO2-database")
-
+	db := dbConn()
 	results, err := db.Query("Select id, deviceid from Device")
-
-	fmt.Fprintln(w, results)
 
 	for results.Next() {
 		var device Device
@@ -46,23 +49,23 @@ func testDatabase(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintln(w, device.DeviceID)
 	}
 
-	//insert, err := db.Query("INSERT INTO device VALUES (123)")
-
-	//defer insert.Close()
-
-	// var device Device
-
-	// err = db.QueryRow("Select id, deviceid FROM device where id = ?", 1).Scan(&device.ID, &device.DeviceID)
-	// fmt.Fprintln(w, device.ID)
-	// fmt.Fprintln(w, device.DeviceID)
-
 	if err != nil {
 		fmt.Fprintln(w, "Some kind of error")
 		fmt.Fprintln(w, err)
 	}
 
-	defer db.Close()
+}
 
+func dbConn() (db *sql.DB) {
+	dbDriver := "mysql"
+	dbUser := "dasc"
+	dbPass := "dasc"
+	dbName := "CO2-database"
+	db, err := sql.Open(dbDriver, dbUser+":"+dbPass+"@/"+dbName)
+	if err != nil {
+		panic(err.Error())
+	}
+	return db
 }
 
 func helloWorld(w http.ResponseWriter, r *http.Request) { //responds to localhost:8080
@@ -71,11 +74,46 @@ func helloWorld(w http.ResponseWriter, r *http.Request) { //responds to localhos
 }
 
 func getNewId(w http.ResponseWriter, r *http.Request) { //responds to localhost:8080/getNewId, gives the last value in the slice and adds last value + 1 to the slice
-	var ids = []int{0} //Slice of int's
 	log.Println(r.Method, r.URL.Path)
-	id := ids[len(ids)-1]   //Find the last int in slice
-	fmt.Fprintln(w, id)     //Print to browser
-	ids = append(ids, id+1) //Add new int on the end of the slice
+	deviceId := 1345
+	id := 999999
+	db := dbConn()
+	results, err := db.Query("Select id, deviceid from Device")
+
+	for results.Next() {
+		var device Device
+		err = results.Scan(&device.ID, &device.DeviceID)
+		if err != nil {
+			fmt.Fprintln(w, "Some kind of error")
+		}
+		if device.DeviceID == deviceId {
+			id = device.ID
+		}
+	}
+
+	if id == 999999 {
+		insertDevice, err := db.Prepare("INSERT INTO Device(DeviceID) VALUES(?)")
+		if err != nil {
+			panic(err.Error())
+		}
+		insertDevice.Exec(deviceId)
+
+		results, err := db.Query("Select id, deviceid from Device")
+
+		for results.Next() {
+			var device Device
+			err = results.Scan(&device.ID, &device.DeviceID)
+			if err != nil {
+				fmt.Fprintln(w, "Some kind of error")
+			}
+			if device.DeviceID == deviceId {
+				id = device.ID
+				fmt.Fprintln(w, "DeviceId: ", id)
+			}
+		}
+	} else {
+		fmt.Fprintln(w, "DeviceId: ", id)
+	}
 }
 
 func respondWithJSON(w http.ResponseWriter, r *http.Request) { //responds to localhost:8080/3 with a JSON example
