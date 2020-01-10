@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"time"
 
 	_ "github.com/go-sql-driver/mysql"
 )
@@ -16,17 +17,29 @@ type Device struct {
 	DeviceID int `json:"deviceid"`
 }
 
+type MeasurementCollection struct {
+	ID   int   `json:"id"`
+	ECO2 []int `json:"eCO2"`
+	TVOC []int `json:"TVOC"`
+}
+
+type Measurement struct {
+	ID        int       `json:"id"`
+	CO2Value  int       `json:"co2values"`
+	TVOCValue int       `json:"tvocvalues"`
+	TimeStamp time.Time `json:"timestamp"`
+}
+
 var (
 	ctx context.Context
 	db  *sql.DB
 )
 
 func main() {
-	http.HandleFunc("/4", readFromUrl) //Call function outside of main
-	http.HandleFunc("/", helloWorld)
 	http.HandleFunc("/getNewId", getNewId)
-	http.HandleFunc("/3", respondWithJSON)
+	http.HandleFunc("/respondWithJson", respondWithJSON)
 	http.HandleFunc("/OpenDB", testDatabase)
+	http.HandleFunc("/sendMeasurements", sendMeasurements)
 	dbConn()
 
 	log.Println("Listening on port 4040")
@@ -36,6 +49,7 @@ func main() {
 }
 
 func testDatabase(w http.ResponseWriter, r *http.Request) {
+	log.Println(r.Method, r.URL.Path)
 	db := dbConn()
 	results, err := db.Query("Select id, deviceid from Device")
 
@@ -66,11 +80,6 @@ func dbConn() (db *sql.DB) {
 		panic(err.Error())
 	}
 	return db
-}
-
-func helloWorld(w http.ResponseWriter, r *http.Request) { //responds to localhost:8080
-	log.Println(r.Method, r.URL.Path)
-	fmt.Fprintln(w, "Hello, world!") //Print to browser
 }
 
 func getNewId(w http.ResponseWriter, r *http.Request) { //responds to localhost:8080/getNewId, gives the last value in the slice and adds last value + 1 to the slice
@@ -124,18 +133,37 @@ func respondWithJSON(w http.ResponseWriter, r *http.Request) { //responds to loc
 	fmt.Fprintln(w, s)                //Print to browser
 }
 
-func readFromUrl(w http.ResponseWriter, r *http.Request) { //responds to localhost:8080/4 and finds the parameters in the url.		Example: localhost:8080/?key=CO2%20655	<- finds CO2 and 655
+func sendMeasurements(w http.ResponseWriter, r *http.Request) {
+	log.Println(r.Method, r.URL.Path)
+	// Declare a new Measurement struct
+	var measurementCollection MeasurementCollection
 
-	keys, ok := r.URL.Query()["key"]
-
-	if !ok || len(keys[0]) < 1 {
-		log.Println("Url Param 'key' is missing")
+	// Try to decode the request body into the struct. If there is an error,
+	// respond to the client with the error message and a 400 statys code.
+	err := json.NewDecoder(r.Body).Decode(&measurementCollection)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	// Query()["key"] will return an array of items,
-	// we only want the single item.
-	key := keys[0]
+	// Code for handling the Measurement
+	for i := 0; i < len(measurementCollection.ECO2); i++ {
+		var measurement Measurement
+		measurement.ID = measurementCollection.ID
+		measurement.CO2Value = measurementCollection.ECO2[i]
+		measurement.TVOCValue = measurementCollection.TVOC[i]
+		measurement.TimeStamp = time.Now()
 
-	log.Println("Url Param 'key' is: " + string(key)) //Print to console
+		addMeasurementToDatabase(measurement)
+	}
+}
+
+func addMeasurementToDatabase(measurement Measurement) {
+	fmt.Println("Adding measurement to db, id value: ", measurement.ID, " eCO2 value: ", measurement.CO2Value, " TVOC value: ", measurement.TVOCValue, " Date value: ", measurement.TimeStamp)
+	db := dbConn()
+	insertMeasurement, err := db.Prepare("INSERT INTO Readings VALUES(?, ?, ?, ?, ?)")
+	if err != nil {
+		fmt.Println(err.Error())
+	}
+	insertMeasurement.Exec(0, measurement.ID, measurement.CO2Value, measurement.TVOCValue, measurement.TimeStamp)
 }
