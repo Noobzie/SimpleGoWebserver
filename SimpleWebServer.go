@@ -13,8 +13,16 @@ import (
 )
 
 type Device struct {
-	ID       int `json:"id"`
-	DeviceID int `json:"deviceid"`
+	ID         int    `json:"id"`
+	HardwareId string `json:"hardwareId"`
+}
+
+type HardwareId struct {
+	HardwareId string `json:"hardwareId"`
+}
+
+type SoftId struct {
+	SoftId int `json:"softId"`
 }
 
 type MeasurementCollection struct {
@@ -37,8 +45,6 @@ var (
 
 func main() {
 	http.HandleFunc("/getNewId", getNewId)
-	http.HandleFunc("/respondWithJson", respondWithJSON)
-	http.HandleFunc("/OpenDB", testDatabase)
 	http.HandleFunc("/sendMeasurements", sendMeasurements)
 	dbConn()
 
@@ -46,28 +52,6 @@ func main() {
 	if err := http.ListenAndServe(":4040", nil); err != nil {
 		log.Fatalln(err)
 	}
-}
-
-func testDatabase(w http.ResponseWriter, r *http.Request) {
-	log.Println(r.Method, r.URL.Path)
-	db := dbConn()
-	results, err := db.Query("Select id, deviceid from Device")
-
-	for results.Next() {
-		var device Device
-		err = results.Scan(&device.ID, &device.DeviceID)
-		if err != nil {
-			fmt.Fprintln(w, "Some kind of error")
-		}
-		fmt.Fprintln(w, device.ID)
-		fmt.Fprintln(w, device.DeviceID)
-	}
-
-	if err != nil {
-		fmt.Fprintln(w, "Some kind of error")
-		fmt.Fprintln(w, err)
-	}
-
 }
 
 func dbConn() (db *sql.DB) {
@@ -84,53 +68,64 @@ func dbConn() (db *sql.DB) {
 
 func getNewId(w http.ResponseWriter, r *http.Request) { //responds to localhost:8080/getNewId, gives the last value in the slice and adds last value + 1 to the slice
 	log.Println(r.Method, r.URL.Path)
-	deviceId := 1345
-	id := 999999
-	db := dbConn()
-	results, err := db.Query("Select id, deviceid from Device")
 
-	for results.Next() {
-		var device Device
-		err = results.Scan(&device.ID, &device.DeviceID)
-		if err != nil {
-			fmt.Fprintln(w, "Some kind of error")
-		}
-		if device.DeviceID == deviceId {
-			id = device.ID
-		}
+	var hardwareId HardwareId
+	//var hardwareID string
+	var deviceId int
+
+	err := json.NewDecoder(r.Body).Decode(&hardwareId)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		fmt.Fprintln(w, "JSON error")
+		return
 	}
 
-	if id == 999999 {
-		insertDevice, err := db.Prepare("INSERT INTO Device(DeviceID) VALUES(?)")
-		if err != nil {
-			panic(err.Error())
-		}
-		insertDevice.Exec(deviceId)
+	deviceId = findDeviceInDb(hardwareId.HardwareId)
 
-		results, err := db.Query("Select id, deviceid from Device")
-
-		for results.Next() {
-			var device Device
-			err = results.Scan(&device.ID, &device.DeviceID)
-			if err != nil {
-				fmt.Fprintln(w, "Some kind of error")
-			}
-			if device.DeviceID == deviceId {
-				id = device.ID
-				fmt.Fprintln(w, "DeviceId: ", id)
-			}
-		}
-	} else {
-		fmt.Fprintln(w, "DeviceId: ", id)
+	if deviceId == 0 {
+		addDeviceToDb(hardwareId.HardwareId)
+		deviceId = findDeviceInDb(hardwareId.HardwareId)
 	}
+
+	var softId SoftId
+	softId.SoftId = deviceId
+
+	b, _ := json.Marshal(softId) //Convert slice to JSON byte array
+	s := string(b)               //JSON byte array to string
+	fmt.Fprintln(w, s)           //Print to browser
+
 }
 
-func respondWithJSON(w http.ResponseWriter, r *http.Request) { //responds to localhost:8080/3 with a JSON example
-	var randomWords = []string{"Raspberry", "ESP32", "Lopy4", "Arduino"} //Slice of strings
-	log.Println(r.Method, r.URL.Path)
-	b, _ := json.Marshal(randomWords) //Convert slice to JSON byte array
-	s := string(b)                    //JSON byte array to string
-	fmt.Fprintln(w, s)                //Print to browser
+func findDeviceInDb(hardwareId string) int {
+	db := dbConn()
+	getDeviceId, err := db.Query("Select id from Device where HardwareId = ?", hardwareId)
+	if err != nil {
+		fmt.Println(err.Error())
+		return 0
+	}
+	defer getDeviceId.Close()
+
+	var foundDeviceId int
+	for getDeviceId.Next() {
+		err := getDeviceId.Scan(&foundDeviceId)
+		if err != nil {
+			log.Fatal(err)
+		}
+		fmt.Println("Found id: ", foundDeviceId)
+	}
+
+	return foundDeviceId
+}
+
+func addDeviceToDb(hardwareId string) {
+	fmt.Println("Adding device to database, hardwareId: ", hardwareId)
+	db := dbConn()
+	addDeviceToDb, err := db.Query("INSERT INTO Device VALUES(?, ?)", 0, hardwareId)
+	if err != nil {
+		fmt.Println(err.Error())
+		return
+	}
+	defer addDeviceToDb.Close()
 }
 
 func sendMeasurements(w http.ResponseWriter, r *http.Request) {
@@ -165,5 +160,6 @@ func addMeasurementToDatabase(measurement Measurement) {
 	if err != nil {
 		fmt.Println(err.Error())
 	}
+	defer insertMeasurement.Close()
 	insertMeasurement.Exec(0, measurement.ID, measurement.CO2Value, measurement.TVOCValue, measurement.TimeStamp)
 }
